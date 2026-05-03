@@ -1,0 +1,31 @@
+{
+  "name": "Default",
+  "description": "Template mặc định - Không áp dụng chỉnh sửa",
+  "created_at": "2026-04-18T00:00:00",
+  "settings": {
+    "speed_value": null,
+    "crop_ratio": "original",
+    "crop_box": null,
+    "flip_h": false,
+    "flip_v": false,
+    "blur": 0,
+    "auto_filters": [],
+    "watermark_text": "",
+    "watermark_position": "bottom-right",
+    "logo_path": "",
+    "logo_position": "top-right",
+    "logo_size": 20,
+    "remove_audio": false,
+    "bg_audio_path": "",
+    "bg_audio_volume": 100,
+    "bg_audio_loop": false,
+    "output_height": null,
+    "split_enabled": false,
+    "trim_start": "5",
+    "trim_end": "30",
+    "split_count": 0,
+    "trimmer_enabled": false,
+    "trimmer_start": 0,
+    "trimmer_end": 0
+  }
+}
