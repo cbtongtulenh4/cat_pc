@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         self._current_video_path: str = ""
         self._selected_scene_idx: int = -1     # -1 = no scene selected
         self._scene_detect_worker = None
+        self._active_recipe = None             # PresetRecipe | None
 
         self.setWindowTitle("ToolHub — Video Editor Pro")
         self.setMinimumSize(1280, 720)
@@ -173,8 +174,9 @@ class MainWindow(QMainWindow):
         self._auto_panel.settings_changed.connect(self._on_auto_settings_changed)
         self._custom_panel.settings_changed.connect(self._on_custom_settings_changed)
 
-        # Template panel → Load template → Custom panel
+        # Template panel → Load template / recipe → Custom panel
         self._template_panel.template_loaded.connect(self._on_template_loaded)
+        self._template_panel.recipe_selected.connect(self._on_recipe_selected)
 
         # Render toolbar → Start/Stop batch
         self._render_toolbar.check_clicked.connect(self._check_batch_settings)
@@ -191,6 +193,7 @@ class MainWindow(QMainWindow):
         self._custom_panel.zoom_mode_requested.connect(self._on_zoom_mode_requested)
         self._custom_panel.zoom_apply_clicked.connect(self._on_zoom_apply)
         self._custom_panel.zoom_reset_clicked.connect(self._on_zoom_reset)
+        self._custom_panel.zoom_ratio_changed.connect(self._on_zoom_ratio_changed)
         self._preview.zoom_box_changed.connect(self._on_zoom_box_from_overlay)
 
         # Scene Split
@@ -405,6 +408,7 @@ class MainWindow(QMainWindow):
 
     def _on_template_loaded(self, settings: dict):
         """Template loaded — set as new global baseline, clear all overrides."""
+        self._active_recipe = None  # JSON template has no per-scene logic
         self._global_settings = settings.copy()
         # Clear all per-video and per-scene overrides
         for f in self._timeline.all_files:
@@ -416,6 +420,46 @@ class MainWindow(QMainWindow):
         self._custom_panel.load_settings(self._current_settings)
         self._preview.update_settings(self._current_settings)
         self._nav_rail.set_tab(1)
+
+    def _on_recipe_selected(self, recipe):
+        """Preset recipe selected — apply global settings, store recipe for per-scene use."""
+        self._active_recipe = recipe
+
+        # 1. Apply global settings from recipe
+        recipe_globals = recipe.get_global_settings()
+        self._global_settings.update(recipe_globals)
+
+        # 2. Clear all per-video and per-scene overrides
+        for f in self._timeline.all_files:
+            f['settings_override'] = {}
+            for sc in f.get('scenes', []):
+                sc['settings_override'] = {}
+
+        # 3. If any video already has scenes detected, apply per-scene logic now
+        if recipe.has_per_scene_logic:
+            for f in self._timeline.all_files:
+                if f.get('scene_done') and f.get('scenes'):
+                    raw = f.get('raw_info', {})
+                    v_w = raw.get('width', 1920)
+                    v_h = raw.get('height', 1080)
+                    recipe.apply_per_scene(f['scenes'], v_w, v_h)
+
+        # 4. Refresh UI
+        self._refresh_resolved_settings()
+        self._auto_panel.load_settings(self._current_settings)
+        self._custom_panel.load_settings(self._current_settings)
+        self._preview.update_settings(self._current_settings)
+        self._nav_rail.set_tab(1)
+
+        InfoBar.success(
+            title="Preset Applied",
+            content=f"Đã áp dụng preset '{recipe.name}'. Bật Scene Split để phân cảnh.",
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3000,
+            parent=self
+        )
 
     def _on_crop_mode_requested(self, enter: bool):
         """Toggle interactive crop overlay on the preview."""
@@ -451,10 +495,22 @@ class MainWindow(QMainWindow):
 
     def _on_zoom_mode_requested(self, enter: bool):
         if enter:
+            # Get ratio from panel
+            checked = self._custom_panel._zoom_ratio_group.checkedButton()
+            val = checked.property("ratio_value") if checked else "free"
+            ar = None
+            if val != "free":
+                w, h = map(int, val.split(':'))
+                ar = w / h
+            
             existing = self._current_settings.get("zoom_box")
-            self._preview.enter_zoom_mode(initial_box=existing)
+            self._preview.enter_zoom_mode(initial_box=existing, aspect_ratio=ar)
         else:
             self._preview.exit_zoom_mode(apply=False)
+
+    def _on_zoom_ratio_changed(self, ratio: float | None):
+        """Update zoom overlay ratio when user clicks a ratio button."""
+        self._preview.set_zoom_aspect_ratio(ratio)
 
     def _on_zoom_apply(self):
         self._preview.exit_zoom_mode(apply=True)
@@ -476,6 +532,20 @@ class MainWindow(QMainWindow):
         self._custom_panel._viewing_scenes = True
         self._custom_panel.set_detecting_state(False)
         self._timeline.update_scenes(video_path, scenes)
+
+        # Apply active recipe per-scene logic if available
+        if self._active_recipe and self._active_recipe.has_per_scene_logic:
+            for f in self._timeline.all_files:
+                if f['path'] == video_path:
+                    raw = f.get('raw_info', {})
+                    v_w = raw.get('width', 1920)
+                    v_h = raw.get('height', 1080)
+                    self._active_recipe.apply_per_scene(f.get('scenes', []), v_w, v_h)
+                    self._custom_panel.set_scene_info(
+                        f"✅ Phát hiện {len(scenes)} cảnh + đã áp dụng preset '{self._active_recipe.name}'"
+                    )
+                    break
+
         if self._custom_panel._viewing_scenes:
             self._timeline.show_scenes(self._current_video_path, True)
             
@@ -629,6 +699,7 @@ class MainWindow(QMainWindow):
             max_workers=self._render_toolbar.workers,
             delete_original=self._render_toolbar.delete_original,
             use_gpu=self._render_toolbar.use_gpu,
+            recipe=self._active_recipe,  # Pass active recipe for auto-detect per-scene
         )
 
         # Connect batch signals

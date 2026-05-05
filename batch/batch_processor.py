@@ -37,7 +37,8 @@ class BatchProcessor(QThread):
         delete_original: bool = False,
         use_gpu: bool = True,
         parent=None,
-        batch_tasks: list[dict] = None
+        batch_tasks: list[dict] = None,
+        recipe=None
     ):
         super().__init__(parent)
         self.signals = BatchSignals()
@@ -49,6 +50,7 @@ class BatchProcessor(QThread):
         self.max_workers = max(1, min(os.cpu_count() or 4, max_workers))
         self.delete_original = delete_original
         self.use_gpu = use_gpu
+        self.recipe = recipe  # PresetRecipe | None — for auto-detect per-scene
 
         self._cancel_event = threading.Event()
         self._active_procs: list[subprocess.Popen] = []
@@ -143,6 +145,23 @@ class BatchProcessor(QThread):
                                     "settings": dict(video_settings)
                                 })
                             self.signals.log.emit(f"   => Detected {len(scenes)} scenes.")
+
+                            # Apply recipe per-scene logic if available
+                            if self.recipe and self.recipe.has_per_scene_logic:
+                                raw = file_obj.get('raw_info', {})
+                                v_w = raw.get('width', 0)
+                                v_h = raw.get('height', 0)
+                                if v_w <= 0 or v_h <= 0:
+                                    # Fallback: get dimensions from ffprobe
+                                    try:
+                                        from core.video_info import get_video_width, get_video_height
+                                        v_w = get_video_width(input_path, FFPROBE_PATH)
+                                        v_h = get_video_height(input_path, FFPROBE_PATH)
+                                    except Exception:
+                                        v_w, v_h = 1920, 1080
+                                self.recipe.apply_per_scene(scenes, v_w, v_h)
+                                self.signals.log.emit(f"   => Applied preset '{self.recipe.name}' per-scene settings.")
+
                         except Exception as e:
                             logger.error(f"Auto-detect failed for {filename}: {e}")
                             self.signals.log.emit(f"   => Auto-detect failed: {e}")

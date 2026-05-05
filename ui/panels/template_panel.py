@@ -1,5 +1,5 @@
 """
-Template Panel — Save / Load / Delete edit templates.
+Template Panel — Save / Load / Delete edit templates + Built-in Preset Recipes.
 Windows 11 Fluent Design style.
 """
 import os
@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem
+    QListWidgetItem, QPushButton, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from qfluentwidgets import (
@@ -15,17 +15,100 @@ from qfluentwidgets import (
     MessageBox
 )
 from core.config import TEMPLATES_DIR
+from core.preset_recipes import BUILTIN_RECIPES, PresetRecipe
 from ui.theme import Colors
 
 
-class TemplatePanel(QWidget):
-    """Panel for managing edit templates — Win11 style."""
+class _PresetCard(QFrame):
+    """Clickable card for a built-in preset recipe."""
 
-    template_loaded = pyqtSignal(dict)  # emits settings dict
+    clicked = pyqtSignal()
+
+    def __init__(self, recipe: PresetRecipe, parent=None):
+        super().__init__(parent)
+        self.recipe = recipe
+        self._selected = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(72)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(12)
+
+        # Icon
+        icon_label = QLabel("🔑")
+        icon_label.setFixedSize(36, 36)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet(f"""
+            background: {Colors.ACCENT_BG};
+            border-radius: 8px;
+            font-size: 18px;
+        """)
+        layout.addWidget(icon_label)
+
+        # Text
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+
+        name_label = QLabel(recipe.name)
+        name_label.setStyleSheet(
+            f"color: {Colors.TEXT}; font-size: 13px; font-weight: 600; background: transparent;"
+        )
+        desc_label = QLabel(recipe.description)
+        desc_label.setStyleSheet(
+            f"color: {Colors.TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
+        desc_label.setWordWrap(True)
+
+        text_layout.addWidget(name_label)
+        text_layout.addWidget(desc_label)
+        layout.addLayout(text_layout, 1)
+
+        self._update_style()
+
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        self._update_style()
+
+    def _update_style(self):
+        if self._selected:
+            self.setStyleSheet(f"""
+                _PresetCard {{
+                    background-color: {Colors.ACCENT_BG};
+                    border: 2px solid {Colors.ACCENT};
+                    border-radius: 10px;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                _PresetCard {{
+                    background-color: {Colors.BG_CARD};
+                    border: 1px solid {Colors.BORDER_CARD};
+                    border-radius: 10px;
+                }}
+                _PresetCard:hover {{
+                    background-color: {Colors.BG_CARD_HOVER};
+                    border-color: {Colors.BORDER_LIGHT};
+                }}
+            """)
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class TemplatePanel(QWidget):
+    """Panel for managing edit templates + built-in presets — Win11 style."""
+
+    template_loaded = pyqtSignal(dict)       # emits settings dict (static JSON template)
+    recipe_selected = pyqtSignal(object)     # emits PresetRecipe instance
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_settings: dict = {}
+        self._selected_recipe: PresetRecipe | None = None
+        self._preset_cards: list[_PresetCard] = []
         self.setStyleSheet(f"background-color: {Colors.BG_PANEL};")
         self._init_ui()
         self._refresh_list()
@@ -45,7 +128,33 @@ class TemplatePanel(QWidget):
         """)
         layout.addWidget(title)
 
-        # Save section
+        # ═══════════════════════════════════════════════════════════
+        #  BUILT-IN PRESETS section
+        # ═══════════════════════════════════════════════════════════
+        layout.addWidget(self._field_label("PRESET CÓ SẴN"))
+
+        for recipe in BUILTIN_RECIPES:
+            card = _PresetCard(recipe)
+            card.clicked.connect(lambda r=recipe, c=card: self._on_preset_card_clicked(r, c))
+            self._preset_cards.append(card)
+            layout.addWidget(card)
+
+        # Apply Preset button
+        self._btn_apply_preset = PrimaryPushButton("▶  ÁP DỤNG PRESET")
+        self._btn_apply_preset.setFixedHeight(40)
+        self._btn_apply_preset.setEnabled(False)
+        self._btn_apply_preset.clicked.connect(self._apply_selected_preset)
+        layout.addWidget(self._btn_apply_preset)
+
+        # Separator — Win11 divider
+        sep = QWidget()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background-color: {Colors.BORDER_DIVIDER};")
+        layout.addWidget(sep)
+
+        # ═══════════════════════════════════════════════════════════
+        #  SAVE / LOAD section (existing)
+        # ═══════════════════════════════════════════════════════════
         layout.addWidget(self._field_label("SAVE CURRENT SETTINGS"))
         save_row = QHBoxLayout()
         self._name_input = LineEdit()
@@ -61,10 +170,10 @@ class TemplatePanel(QWidget):
         layout.addLayout(save_row)
 
         # Separator — Win11 divider
-        sep = QWidget()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background-color: {Colors.BORDER_DIVIDER};")
-        layout.addWidget(sep)
+        sep2 = QWidget()
+        sep2.setFixedHeight(1)
+        sep2.setStyleSheet(f"background-color: {Colors.BORDER_DIVIDER};")
+        layout.addWidget(sep2)
 
         # Template list — Win11 ListView style
         layout.addWidget(self._field_label("SAVED TEMPLATES"))
@@ -114,6 +223,35 @@ class TemplatePanel(QWidget):
         btn_row.addWidget(btn_delete)
 
         layout.addLayout(btn_row)
+
+    # ═══════════════════════════════════════════════════════════
+    #  Preset handlers
+    # ═══════════════════════════════════════════════════════════
+
+    def _on_preset_card_clicked(self, recipe: PresetRecipe, card: _PresetCard):
+        """Toggle preset selection (single-select)."""
+        if self._selected_recipe is recipe:
+            # Deselect
+            self._selected_recipe = None
+            card.set_selected(False)
+            self._btn_apply_preset.setEnabled(False)
+        else:
+            # Deselect previous
+            for c in self._preset_cards:
+                c.set_selected(False)
+            # Select new
+            self._selected_recipe = recipe
+            card.set_selected(True)
+            self._btn_apply_preset.setEnabled(True)
+
+    def _apply_selected_preset(self):
+        """Emit the selected preset recipe for MainWindow to handle."""
+        if self._selected_recipe:
+            self.recipe_selected.emit(self._selected_recipe)
+
+    # ═══════════════════════════════════════════════════════════
+    #  Existing template methods (unchanged)
+    # ═══════════════════════════════════════════════════════════
 
     def set_current_settings(self, settings: dict):
         """Update the settings that will be saved when user clicks Save."""

@@ -31,7 +31,7 @@ class CropOverlayWidget(QWidget):
         self.setMouseTracking(True)
 
         # Crop box in percent (0-100)
-        self._box = {"x": 10.0, "y": 10.0, "width": 80.0, "height": 80.0}
+        self._box = {"x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0}
 
         # Drag state
         self._drag_mode = None  # "move" | "tl" | "tr" | "bl" | "br" | None
@@ -74,11 +74,11 @@ class CropOverlayWidget(QWidget):
                 # nw% * vw / (nh% * vh) = ratio -> nw% = ratio * nh% * (vh/vw)
                 
                 if ratio > container_ratio:
-                    nw_pct = 80.0
-                    nh_pct = (80.0 / ratio) * container_ratio
+                    nw_pct = 100.0
+                    nh_pct = (100.0 / ratio) * container_ratio
                 else:
-                    nh_pct = 80.0
-                    nw_pct = (80.0 * ratio) / container_ratio
+                    nh_pct = 100.0
+                    nw_pct = (100.0 * ratio) / container_ratio
                 
                 # print(f"[Ratio Change] Target AR: {ratio:.2f} | Container AR: {container_ratio:.2f}")
                 # print(f"  Initial Box %: Width={nw_pct:.2f}, Height={nh_pct:.2f}")
@@ -264,36 +264,54 @@ class CropOverlayWidget(QWidget):
         sb = self._drag_start_box
 
         if self._drag_mode == "move":
+            # Moving the entire box: clamp top-left so it stays within [0, 100]
             nx = max(0, min(100 - sb["width"], sb["x"] + dx_pct))
             ny = max(0, min(100 - sb["height"], sb["y"] + dy_pct))
             self._box["x"] = nx
             self._box["y"] = ny
         else:
             # Corner drag
-            nx, ny, nw, nh = sb["x"], sb["y"], sb["width"], sb["height"]
+            # Determine anchor (the point that stays fixed)
+            # If dragging Right handle, Left side is anchor. If dragging Left handle, Right side is anchor.
             anchor_x = sb["x"] if "r" in self._drag_mode else sb["x"] + sb["width"]
             anchor_y = sb["y"] if "b" in self._drag_mode else sb["y"] + sb["height"]
 
-            # Calculate target width/height based on mouse delta
-            if "l" in self._drag_mode:
-                nw = max(2, sb["width"] - dx_pct)
-                nx = anchor_x - nw
-            elif "r" in self._drag_mode:
-                nw = max(2, sb["width"] + dx_pct)
+            if self._aspect_ratio is None:
+                # --- Free Drag ---
+                nw, nh = sb["width"], sb["height"]
+                
+                # 1. Calculate target width/height based on mouse movement
+                if "l" in self._drag_mode:
+                    nw = max(2, sb["width"] - dx_pct)
+                elif "r" in self._drag_mode:
+                    nw = max(2, sb["width"] + dx_pct)
 
-            if "t" in self._drag_mode:
-                nh = max(2, sb["height"] - dy_pct)
-                ny = anchor_y - nh
-            elif "b" in self._drag_mode:
-                nh = max(2, sb["height"] + dy_pct)
+                if "t" in self._drag_mode:
+                    nh = max(2, sb["height"] - dy_pct)
+                elif "b" in self._drag_mode:
+                    nh = max(2, sb["height"] + dy_pct)
+                
+                # 2. Boundary Check (Clamp to video frame limits)
+                if "l" in self._drag_mode:
+                    if anchor_x - nw < 0: nw = anchor_x
+                else:
+                    if anchor_x + nw > 100: nw = 100 - anchor_x
 
-            # Apply aspect ratio constraint
-            if self._aspect_ratio is not None:
+                if "t" in self._drag_mode:
+                    if anchor_y - nh < 0: nh = anchor_y
+                else:
+                    if anchor_y + nh > 100: nh = 100 - anchor_y
+                
+                # 3. Final coordinates relative to anchor
+                nx = anchor_x - nw if "l" in self._drag_mode else anchor_x
+                ny = anchor_y - nh if "t" in self._drag_mode else anchor_y
+
+            else:
+                # --- Aspect Ratio Drag ---
                 ar_pixel = self._aspect_ratio
                 container_ar = vr.width() / vr.height()
                 ar_pct = ar_pixel / container_ar
                 
-                # Pure diagonal projection logic
                 sig_x = 1 if "r" in self._drag_mode else -1
                 sig_y = 1 if "b" in self._drag_mode else -1
                 
@@ -301,12 +319,8 @@ class CropOverlayWidget(QWidget):
                 vx, vy = sig_x * ar_pct, sig_y * 1
                 mag_sq = vx*vx + vy*vy
                 
-                # Mouse delta relative to start of drag
-                dx = (pos.x() - self._drag_start_mouse.x()) / vr.width() * 100
-                dy = (pos.y() - self._drag_start_mouse.y()) / vr.height() * 100
-                
-                # Project (dx, dy) onto (vx, vy)
-                dot = dx*vx + dy*vy
+                # Project mouse delta (dx_pct, dy_pct) onto the diagonal vector
+                dot = dx_pct*vx + dy_pct*vy
                 proj_len = dot / mag_sq
                 
                 nw = max(2, sb["width"] + proj_len * vx * sig_x)
@@ -329,13 +343,10 @@ class CropOverlayWidget(QWidget):
                 else:
                     nw = nh * ar_pct
 
-                # Calculate final nx, ny
+                # Calculate final top-left nx, ny
                 nx = anchor_x - nw if "l" in self._drag_mode else anchor_x
                 ny = anchor_y - nh if "t" in self._drag_mode else anchor_y
 
-            # Final safety clamp
-            nx = max(0, min(100 - nw, nx))
-            ny = max(0, min(100 - nh, ny))
             self._box = {"x": nx, "y": ny, "width": nw, "height": nh}
 
         self.update()

@@ -46,6 +46,15 @@ CROP_RATIOS = [
     ("4:3", "4:3"),
 ]
 
+ZOOM_RATIOS = [
+    ("free", "Tự do"),
+    ("9:16", "9:16"),
+    ("16:9", "16:9"),
+    ("1:1", "1:1"),
+    ("4:5", "4:5"),
+    ("4:3", "4:3"),
+]
+
 CANVAS_RATIOS = [
     ("Gốc", None),
     ("9:16", 9/16),
@@ -164,7 +173,8 @@ class CustomPanel(QWidget):
         self._debounce.setInterval(120)  # 120 ms
         self._debounce.timeout.connect(self._do_emit)
 
-        self._confirmed_settings = self._default_settings()
+        self._confirmed_settings = self._default_settings() # Finalized (global confirm)
+        self._staged_settings = self._default_settings()    # Staged (tool apply)
         self._tool_btns: dict[str, _ToolButton] = {}
         self._init_ui()
         self._update_active_indicators()
@@ -176,6 +186,7 @@ class CustomPanel(QWidget):
     def _on_confirm_clicked(self):
         """Finalize changes: update confirmed settings and markers."""
         self._confirmed_settings = self.get_settings() # Save to ground truth
+        self._staged_settings = dict(self._confirmed_settings) # Sync staged with confirmed
         InfoBar.success(
             title="Thành công",
             content="Đã lưu các tùy chỉnh chỉnh sửa.",
@@ -196,7 +207,13 @@ class CustomPanel(QWidget):
         active_map = {
             "ratio":     (s.get("canvas_ratio_val") is not None),
             "bg":        (s.get("bg_type") != "black"),
-            "color":     (s.get("brightness", 0) != 0 or s.get("saturation", 0) != 0),
+            "color":     (
+                s.get("brightness", 0) != 0 or 
+                s.get("saturation", 0) != 0 or
+                s.get("red", 0) != 0 or
+                s.get("green", 0) != 0 or
+                s.get("blue", 0) != 0
+            ),
             "crop":      (s.get("crop_ratio") != "original" or s.get("crop_box") is not None),
             "zoom":      (s.get("zoom_box") is not None),
             "trim":      bool(s.get("trimmer_enabled")),
@@ -219,6 +236,7 @@ class CustomPanel(QWidget):
             "canvas_ratio_label": "Gốc", "canvas_ratio_val": None,
             "bg_type": "black", "bg_blur_strength": 5,
             "brightness": 0, "saturation": 0,
+            "red": 0, "green": 0, "blue": 0,
             "crop_ratio": "original", "crop_box": None,
             "zoom_box": None,
             "speed_value": None,
@@ -338,12 +356,12 @@ class CustomPanel(QWidget):
 
     def _on_tool_clicked(self, index: int):
         """Discard unconfirmed changes and switch to new tool."""
-        # 1. Revert UI to the last confirmed state
-        self.load_settings(self._confirmed_settings)
+        # 1. Revert UI to the last staged state (changes accepted in tool panels but not global)
+        self.load_settings(self._staged_settings)
         # 2. Switch sub-panel
         self._stack.setCurrentIndex(index)
         # 3. Ensure preview matches the reverted state
-        self.settings_changed.emit(self._confirmed_settings)
+        self.settings_changed.emit(self._staged_settings)
 
     # ═══════════════════════════════════════════════════════════
     #  Sub-panel builders
@@ -556,7 +574,112 @@ class CustomPanel(QWidget):
         s_layout.addWidget(self._saturation_slider)
         layout.addWidget(s_container)
 
+        # Red slider
+        r_container = QWidget()
+        r_layout = QVBoxLayout(r_container)
+        r_layout.setContentsMargins(0, 0, 0, 0)
+        r_layout.setSpacing(6)
+        r_header = QHBoxLayout()
+        r_header.addWidget(self._field_label("RED (ĐỎ)"))
+        r_header.addStretch()
+        self._red_input = LineEdit()
+        self._red_input.setText("0")
+        self._red_input.setFixedWidth(50)
+        self._red_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._red_input.setStyleSheet(f"height: 24px; font-size: 11px; font-weight: 600; color: #ff6b6b; background: {Colors.BG_SUBTLE}; border: 1px solid rgba(255, 107, 107, 0.3); border-radius: 4px;")
+        r_header.addWidget(self._red_input)
+        r_layout.addLayout(r_header)
+        self._red_slider = Slider(Qt.Orientation.Horizontal)
+        self._red_slider.setRange(-50, 50)
+        self._red_slider.setValue(0)
+        self._red_slider.valueChanged.connect(self._on_red_slider_changed)
+        self._red_input.editingFinished.connect(self._on_red_input_done)
+        r_layout.addWidget(self._red_slider)
+        layout.addWidget(r_container)
+
+        # Green slider
+        g_container = QWidget()
+        g_layout = QVBoxLayout(g_container)
+        g_layout.setContentsMargins(0, 0, 0, 0)
+        g_layout.setSpacing(6)
+        g_header = QHBoxLayout()
+        g_header.addWidget(self._field_label("GREEN (XANH LÁ)"))
+        g_header.addStretch()
+        self._green_input = LineEdit()
+        self._green_input.setText("0")
+        self._green_input.setFixedWidth(50)
+        self._green_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._green_input.setStyleSheet(f"height: 24px; font-size: 11px; font-weight: 600; color: #6ccb5f; background: {Colors.BG_SUBTLE}; border: 1px solid rgba(108, 203, 95, 0.3); border-radius: 4px;")
+        g_header.addWidget(self._green_input)
+        g_layout.addLayout(g_header)
+        self._green_slider = Slider(Qt.Orientation.Horizontal)
+        self._green_slider.setRange(-50, 50)
+        self._green_slider.setValue(0)
+        self._green_slider.valueChanged.connect(self._on_green_slider_changed)
+        self._green_input.editingFinished.connect(self._on_green_input_done)
+        g_layout.addWidget(self._green_slider)
+        layout.addWidget(g_container)
+
+        # Blue slider
+        bl_container = QWidget()
+        bl_layout = QVBoxLayout(bl_container)
+        bl_layout.setContentsMargins(0, 0, 0, 0)
+        bl_layout.setSpacing(6)
+        bl_header = QHBoxLayout()
+        bl_header.addWidget(self._field_label("BLUE (XANH DƯƠNG)"))
+        bl_header.addStretch()
+        self._blue_input = LineEdit()
+        self._blue_input.setText("0")
+        self._blue_input.setFixedWidth(50)
+        self._blue_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._blue_input.setStyleSheet(f"height: 24px; font-size: 11px; font-weight: 600; color: #4b9fff; background: {Colors.BG_SUBTLE}; border: 1px solid rgba(75, 159, 255, 0.3); border-radius: 4px;")
+        bl_header.addWidget(self._blue_input)
+        bl_layout.addLayout(bl_header)
+        self._blue_slider = Slider(Qt.Orientation.Horizontal)
+        self._blue_slider.setRange(-50, 50)
+        self._blue_slider.setValue(0)
+        self._blue_slider.valueChanged.connect(self._on_blue_slider_changed)
+        self._blue_input.editingFinished.connect(self._on_blue_input_done)
+        bl_layout.addWidget(self._blue_slider)
+        layout.addWidget(bl_container)
+
         return panel
+
+    def _on_red_slider_changed(self, value):
+        self._red_input.setText(str(value))
+        self._emit_settings()
+
+    def _on_red_input_done(self):
+        try:
+            val = int(self._red_input.text())
+            self._red_slider.setValue(max(-50, min(50, val)))
+        except:
+            self._red_input.setText(str(self._red_slider.value()))
+        self._emit_settings()
+
+    def _on_green_slider_changed(self, value):
+        self._green_input.setText(str(value))
+        self._emit_settings()
+
+    def _on_green_input_done(self):
+        try:
+            val = int(self._green_input.text())
+            self._green_slider.setValue(max(-50, min(50, val)))
+        except:
+            self._green_input.setText(str(self._green_slider.value()))
+        self._emit_settings()
+
+    def _on_blue_slider_changed(self, value):
+        self._blue_input.setText(str(value))
+        self._emit_settings()
+
+    def _on_blue_input_done(self):
+        try:
+            val = int(self._blue_input.text())
+            self._blue_slider.setValue(max(-50, min(50, val)))
+        except:
+            self._blue_input.setText(str(self._blue_slider.value()))
+        self._emit_settings()
 
     def _on_brightness_slider_changed(self, value):
         self._brightness_input.setText(str(value))
@@ -720,9 +843,8 @@ class CustomPanel(QWidget):
         self._crop_toggle.blockSignals(False)
         self._btn_crop_apply.setEnabled(False)
         
-        self._confirmed_settings = self.get_settings()
-        self._update_active_indicators()
-        self.settings_changed.emit(self._confirmed_settings)
+        self._staged_settings = self.get_settings()
+        self.settings_changed.emit(self._staged_settings)
         
         self.crop_apply_clicked.emit()
 
@@ -740,10 +862,9 @@ class CustomPanel(QWidget):
         self._crop_info.setText("Chưa cắt (Original)")
         self._btn_crop_apply.setEnabled(False)
         
-        # Immediate sync to ground truth and preview
-        self._confirmed_settings = self.get_settings()
-        self._update_active_indicators()
-        self.settings_changed.emit(self._confirmed_settings)
+        # Sync to staged state and preview
+        self._staged_settings = self.get_settings()
+        self.settings_changed.emit(self._staged_settings)
         
         self.crop_reset_clicked.emit()
 
@@ -775,6 +896,7 @@ class CustomPanel(QWidget):
     # ═══════════════════════════════════════════════════════════
 
     zoom_mode_requested = pyqtSignal(bool)
+    zoom_ratio_changed = pyqtSignal(object)  # float or None
 
     def _create_zoom_panel(self) -> QWidget:
         panel = QWidget()
@@ -784,6 +906,49 @@ class CustomPanel(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         layout.addWidget(self._section_label("ZOOM & SCALE"))
+
+        layout.addWidget(self._field_label("TỈ LỆ LƯỚI (ASPECT RATIO)"))
+        
+        # Zoom ratio flow layout
+        ratio_container = QWidget()
+        row = FlowLayout(ratio_container, spacing=4)
+        row.setContentsMargins(0, 0, 0, 0)
+
+        self._zoom_ratio_group = QButtonGroup(self)
+        self._zoom_ratio_group.setExclusive(True)
+        self._zoom_ratio_btns: dict[str, QPushButton] = {}
+        for val, label in ZOOM_RATIOS:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setProperty("ratio_value", val)
+            btn.setFixedSize(72, 35)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {Colors.BG_CARD}; border: 1px solid {Colors.BORDER_CARD};
+                    border-radius: 6px; color: {Colors.TEXT_SECONDARY};
+                    font-size: 13px; font-weight: 600;
+                }}
+                QPushButton:hover {{
+                    background: {Colors.BG_CARD_HOVER};
+                }}
+                QPushButton:checked {{
+                    background: {Colors.ACCENT}; border-color: {Colors.ACCENT}; color: white;
+                }}
+            """)
+            if val == "free":
+                btn.setChecked(True)
+            self._zoom_ratio_btns[val] = btn
+            self._zoom_ratio_group.addButton(btn)
+            row.addWidget(btn)
+        
+        self._zoom_ratio_group.buttonClicked.connect(self._on_zoom_ratio_clicked)
+        layout.addWidget(ratio_container)
+
+        # Separator
+        sep = QWidget()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background-color: {Colors.BORDER_DIVIDER};")
+        layout.addWidget(sep)
 
         # Tương tác khung lưới
         self._zoom_toggle = QPushButton("🔍  Kéo thả Zoom trên Video")
@@ -860,6 +1025,18 @@ class CustomPanel(QWidget):
 
         return panel
 
+    def _on_zoom_ratio_clicked(self, btn: QPushButton):
+        """Handle zoom ratio button clicks."""
+        val = btn.property("ratio_value")
+        # If zoom mode is active, update the overlay ratio immediately
+        if self._zoom_toggle.isChecked():
+            ratio = None
+            if val != "free":
+                w, h = map(int, val.split(':'))
+                ratio = w / h
+            self.zoom_ratio_changed.emit(ratio)
+        # self._emit_settings()
+
     def _on_zoom_toggle(self, checked: bool):
         self.zoom_mode_requested.emit(checked)
         if checked:
@@ -880,9 +1057,8 @@ class CustomPanel(QWidget):
         self._zoom_toggle.blockSignals(False)
         self._btn_zoom_apply.setEnabled(False)
         
-        self._confirmed_settings = self.get_settings()
-        self._update_active_indicators()
-        self.settings_changed.emit(self._confirmed_settings)
+        self._staged_settings = self.get_settings()
+        self.settings_changed.emit(self._staged_settings)
         
         self.zoom_apply_clicked.emit()
 
@@ -892,13 +1068,11 @@ class CustomPanel(QWidget):
         self._zoom_toggle.blockSignals(False)
         self._current_zoom_box = None
         self._zoom_info.setText("Original Size & Position")
-        self._btn_zoom_apply.setEnabled(False)
         self._btn_zoom_reset.setEnabled(False)
         
-        # Immediate sync to ground truth and preview
-        self._confirmed_settings = self.get_settings()
-        self._update_active_indicators()
-        self.settings_changed.emit(self._confirmed_settings)
+        # Sync to staged state and preview
+        self._staged_settings = self.get_settings()
+        self.settings_changed.emit(self._staged_settings)
         
         self.zoom_reset_clicked.emit()
 
@@ -1820,6 +1994,9 @@ class CustomPanel(QWidget):
             "bg_blur_strength": self._bg_blur_slider.value(),
             "brightness": self._brightness_slider.value(),
             "saturation": self._saturation_slider.value(),
+            "red": self._red_slider.value(),
+            "green": self._green_slider.value(),
+            "blue": self._blue_slider.value(),
             "crop_ratio": crop_ratio,
             "crop_box": self._current_crop_box,
             "zoom_box": self._current_zoom_box,
@@ -1853,6 +2030,7 @@ class CustomPanel(QWidget):
         """Restore UI state from settings dict (e.g. when loading a template)."""
         self._is_loading = True
         self._confirmed_settings = settings.copy()
+        self._staged_settings = settings.copy()  # Sync staged settings to avoid reset on tool click
         self.blockSignals(True)
 
         # Ratio
@@ -1880,6 +2058,18 @@ class CustomPanel(QWidget):
         sa = settings.get("saturation", 0)
         self._saturation_slider.setValue(sa)
         self._saturation_input.setText(str(sa))
+
+        r = settings.get("red", 0)
+        self._red_slider.setValue(r)
+        self._red_input.setText(str(r))
+
+        g = settings.get("green", 0)
+        self._green_slider.setValue(g)
+        self._green_input.setText(str(g))
+
+        b = settings.get("blue", 0)
+        self._blue_slider.setValue(b)
+        self._blue_input.setText(str(b))
 
         # Crop
         cr = settings.get("crop_ratio", "original")

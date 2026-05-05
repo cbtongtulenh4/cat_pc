@@ -38,6 +38,7 @@ class ZoomOverlayWidget(QWidget):
         self._drag_mode = None
         self._drag_start = QPointF()
         self._drag_start_box = QRectF()
+        self._aspect_ratio = None # Aspect ratio constraint (None = free)
 
     def set_canvas_offset(self, offset: QPointF, size: QRectF):
         """Cập nhật vị trí canvas trong overlay widget"""
@@ -53,6 +54,19 @@ class ZoomOverlayWidget(QWidget):
     def get_box(self) -> QRectF:
         """Get box relative to canvas"""
         return QRectF(self._box)
+
+    def set_aspect_ratio(self, ratio: float | None):
+        """Set aspect ratio constraint for dragging"""
+        self._aspect_ratio = ratio
+        if ratio:
+            # Adjust current box to match ratio (centered on current center)
+            # Area preservation to avoid "shrinking" bug
+            center = self._box.center()
+            area = self._box.width() * self._box.height()
+            nh = (area / ratio) ** 0.5
+            nw = nh * ratio
+            self._box = QRectF(center.x() - nw/2, center.y() - nh/2, nw, nh)
+        self.update()
 
     def _box_on_screen(self) -> QRectF:
         """Chuyển box từ tọa độ canvas → tọa độ screen (overlay widget)"""
@@ -180,22 +194,52 @@ class ZoomOverlayWidget(QWidget):
 
         if self._drag_mode == "move":
             self._box = QRectF(sb.x()+dx, sb.y()+dy, sb.width(), sb.height())
-        elif self._drag_mode == "tl":
-            self._box = QRectF(sb.left()+dx, sb.top()+dy, sb.right()-(sb.left()+dx), sb.bottom()-(sb.top()+dy))
-        elif self._drag_mode == "tr":
-            self._box = QRectF(sb.left(), sb.top()+dy, sb.right()+dx-sb.left(), sb.bottom()-(sb.top()+dy))
-        elif self._drag_mode == "bl":
-            self._box = QRectF(sb.left()+dx, sb.top(), sb.right()-(sb.left()+dx), sb.bottom()+dy-sb.top())
-        elif self._drag_mode == "br":
-            self._box = QRectF(sb.left(), sb.top(), sb.right()+dx-sb.left(), sb.bottom()+dy-sb.top())
-        elif self._drag_mode == "t":
-            self._box = QRectF(sb.left(), sb.top()+dy, sb.width(), sb.bottom()-(sb.top()+dy))
-        elif self._drag_mode == "b":
-            self._box = QRectF(sb.left(), sb.top(), sb.width(), sb.bottom()+dy-sb.top())
-        elif self._drag_mode == "l":
-            self._box = QRectF(sb.left()+dx, sb.top(), sb.right()-(sb.left()+dx), sb.height())
-        elif self._drag_mode == "r":
-            self._box = QRectF(sb.left(), sb.top(), sb.right()+dx-sb.left(), sb.height())
+        elif self._aspect_ratio:
+            # --- Aspect Ratio Dragging ---
+            ratio = self._aspect_ratio
+            if self._drag_mode in ("tl", "tr", "bl", "br"):
+                # Diagonal projection logic
+                sig_x = 1 if "r" in self._drag_mode else -1
+                sig_y = 1 if "b" in self._drag_mode else -1
+                vx, vy = sig_x * ratio, sig_y * 1
+                mag_sq = vx*vx + vy*vy
+                dot = dx*vx + dy*vy
+                proj_len = dot / mag_sq
+                nw = max(MIN, sb.width() + proj_len * vx * sig_x)
+                nh = nw / ratio
+                nx = sb.right() - nw if "l" in self._drag_mode else sb.left()
+                ny = sb.bottom() - nh if "t" in self._drag_mode else sb.top()
+                self._box = QRectF(nx, ny, nw, nh)
+            elif self._drag_mode in ("t", "b"):
+                nh = max(MIN, sb.height() + (dy if self._drag_mode == "b" else -dy))
+                nw = nh * ratio
+                nx = sb.center().x() - nw/2
+                ny = sb.bottom() - nh if self._drag_mode == "t" else sb.top()
+                self._box = QRectF(nx, ny, nw, nh)
+            elif self._drag_mode in ("l", "r"):
+                nw = max(MIN, sb.width() + (dx if self._drag_mode == "r" else -dx))
+                nh = nw / ratio
+                nx = sb.right() - nw if self._drag_mode == "l" else sb.left()
+                ny = sb.center().y() - nh/2
+                self._box = QRectF(nx, ny, nw, nh)
+        else:
+            # --- Free Dragging ---
+            if self._drag_mode == "tl":
+                self._box = QRectF(sb.left()+dx, sb.top()+dy, sb.right()-(sb.left()+dx), sb.bottom()-(sb.top()+dy))
+            elif self._drag_mode == "tr":
+                self._box = QRectF(sb.left(), sb.top()+dy, sb.right()+dx-sb.left(), sb.bottom()-(sb.top()+dy))
+            elif self._drag_mode == "bl":
+                self._box = QRectF(sb.left()+dx, sb.top(), sb.right()-(sb.left()+dx), sb.bottom()+dy-sb.top())
+            elif self._drag_mode == "br":
+                self._box = QRectF(sb.left(), sb.top(), sb.right()+dx-sb.left(), sb.bottom()+dy-sb.top())
+            elif self._drag_mode == "t":
+                self._box = QRectF(sb.left(), sb.top()+dy, sb.width(), sb.bottom()-(sb.top()+dy))
+            elif self._drag_mode == "b":
+                self._box = QRectF(sb.left(), sb.top(), sb.width(), sb.bottom()+dy-sb.top())
+            elif self._drag_mode == "l":
+                self._box = QRectF(sb.left()+dx, sb.top(), sb.right()-(sb.left()+dx), sb.height())
+            elif self._drag_mode == "r":
+                self._box = QRectF(sb.left(), sb.top(), sb.right()+dx-sb.left(), sb.height())
 
         if self._box.width() < MIN: self._box.setWidth(MIN)
         if self._box.height() < MIN: self._box.setHeight(MIN)
@@ -244,6 +288,20 @@ class ZoomCanvasPreviewDemo(QWidget):
         self.combo.addItems(self.ratios.keys())
         self.combo.currentIndexChanged.connect(self.on_ratio_changed)
         rl.addWidget(self.combo)
+
+        rl.addWidget(QLabel("Tỉ lệ lưới (Grid Ratio):"))
+        self.zoom_ratio_combo = QComboBox()
+        self.zoom_ratios = {
+            "Tự do": None,
+            "9:16": 9/16,
+            "16:9": 16/9,
+            "1:1": 1.0,
+            "4:5": 4/5,
+            "4:3": 4/3
+        }
+        self.zoom_ratio_combo.addItems(self.zoom_ratios.keys())
+        self.zoom_ratio_combo.currentIndexChanged.connect(self.on_zoom_ratio_changed)
+        rl.addWidget(self.zoom_ratio_combo)
 
         self.blur_label = QLabel("Blur Strength: 40")
         rl.addWidget(self.blur_label)
@@ -361,6 +419,13 @@ class ZoomCanvasPreviewDemo(QWidget):
     def on_blur_changed(self, val):
         self.blur_strength = val
         self.blur_label.setText(f"Blur Strength: {val}")
+
+    def on_zoom_ratio_changed(self):
+        if self.zoom_overlay:
+            label = self.zoom_ratio_combo.currentText()
+            ratio = self.zoom_ratios[label]
+            self.zoom_overlay.set_aspect_ratio(ratio)
+            self._update_zoom_info()
 
     def _init_grid(self):
         """Tạo lưới bao quanh vị trí video mặc định"""

@@ -125,51 +125,20 @@ class AspectRatioCanvasDemo(QWidget):
         self.current_ratio_val = ratio
         
         self.info_label.setText(f"Khung hình đích: {label}")
-        self.update_container_aspect(ratio)
-        self.apply_preview_filters()
-
+        
+        # SỬ DỤNG API CHÍNH THỨC: update_settings để PreviewWidget tự quản lý container
+        self.preview.update_settings({
+            "canvas_ratio_val": ratio,
+            "bg_type": "black" # Hoặc "blur" tùy ý
+        })
 
     def update_container_aspect(self, ratio):
-        """Thay đổi kích thước vùng HIỂN THỊ VIDEO, giữ Slider full width"""
-        if ratio is None:
-            # Reset vùng video nội bộ về tự do
-            self.preview._video_container.setMinimumSize(0, 0)
-            self.preview._video_container.setMaximumSize(16777215, 16777215)
-            self.preview.player['keepaspect'] = 'yes'
-            return
-            
-        # Chiều cao vùng video thực tế (trừ đi thanh controls 44px)
-        max_w = self.preview_container.width()
-        max_h = self.preview_container.height() - 44
-        
-        if max_w <= 0 or max_h <= 0:
-            max_w, max_h = 700, 500
-            
-        target_w = max_w
-        target_h = target_w / ratio
-        
-        if target_h > max_h:
-            target_h = max_h
-            target_w = target_h * ratio
-        
-        # Chỉ fix size vùng VIDEO bên trong PreviewWidget
-        self.preview._video_container.setFixedSize(int(target_w), int(target_h))
-        
-        # Căn giữa vùng video này trong PreviewWidget
-        self.preview.layout().setAlignment(self.preview._video_container, Qt.AlignmentFlag.AlignCenter)
-        
-        self.preview.player['keepaspect'] = 'no'
+        """Hàm này hiện tại đã được PreviewWidget tự xử lý bên trong update_settings"""
+        pass
 
     def apply_preview_filters(self):
-        """Mặc định không dùng filter (Nền đen). Tỉ lệ được xử lý qua container."""
-        self.preview.player.vf = ""
-        # Khi không dùng filter, MPV cần keepaspect để tự letterbox chuẩn
-        if self.current_ratio_val is None:
-             self.preview.player['keepaspect'] = 'yes'
-        else:
-             # Dù ở tỉ lệ nào, ta vẫn để MPV tự xử lý vùng đen (Letterbox) 
-             # vì ta đã resize container về đúng tỉ lệ mục tiêu rồi.
-             self.preview.player['keepaspect'] = 'yes'
+        """Hàm này hiện tại đã được PreviewWidget tự xử lý bên trong update_settings"""
+        pass
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

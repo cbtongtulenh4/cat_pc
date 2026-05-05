@@ -149,6 +149,17 @@ def build_vf_string(settings: dict, for_preview: bool = False) -> list[str]:
         s_val = 1.0 + (sa / 50.0)
         vf_filters.append(f"eq=brightness={b_val:.2f}:saturation={s_val:.2f}")
 
+    # 4.4 RGB Curves
+    r_val = settings.get("red", 0)
+    g_val = settings.get("green", 0)
+    b_val = settings.get("blue", 0)
+    if r_val != 0 or g_val != 0 or b_val != 0:
+        # Map -50..50 to 0.25..0.75 for the mid-point of the curve (0/0 0.5/X 1/1)
+        r_mid = 0.5 + (r_val / 200.0)
+        g_mid = 0.5 + (g_val / 200.0)
+        b_mid = 0.5 + (b_val / 200.0)
+        vf_filters.append(f"curves=r='0/0 0.5/{r_mid:.2f} 1/1':g='0/0 0.5/{g_mid:.2f} 1/1':b='0/0 0.5/{b_mid:.2f} 1/1'")
+
     # 4.5 Auto Filters
     auto_filters = settings.get("auto_filters", [])
     if auto_filters:

@@ -107,7 +107,7 @@ class PreviewWidget(QWidget):
         self.video_canvas.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        self.video_canvas.setMinimumSize(400, 250)
+        self.video_canvas.setMinimumSize(0, 0)
         
         # Top layer: Crop overlay (child of video_canvas for better composition)
         self._crop_overlay = CropOverlayWidget(self.video_canvas)
@@ -409,56 +409,53 @@ class PreviewWidget(QWidget):
         # Apply to MPV
         try:
             zoom_box = settings.get("zoom_box")
-                
-            if zoom_box and self._canvas_ratio and not self._crop_mode:
+            
+            # Unified Canvas Rendering Logic
+            # If we have a target canvas ratio, we should explicitly render on a canvas
+            # to handle centering, scaling, and background styles correctly.
+            if self._canvas_ratio and not self._crop_mode:
                 cw = 720
                 ch = int(720 / float(self._canvas_ratio))
                 cw, ch = (cw//2)*2, (ch//2)*2
                 
-                video_w = (int(zoom_box['width']) // 2) * 2
-                video_h = (int(zoom_box['height']) // 2) * 2
-                target_x = int(zoom_box['x'])
-                target_y = int(zoom_box['y'])
-                
                 pre_filters = f"{vf_str}[v0];[v0]" if vf_str else ""
                 
+                # 1. Build Background
                 if bg_type == "blur":
                     strength = settings.get("bg_blur_strength", 40)
                     bg_filter = f"scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},boxblur={strength}:5"
                 else:
-                    # Nền đen: scale+crop để tạo khung đúng kích thước, rồi tô đen
+                    # Black Background
                     bg_filter = f"scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill"
+                
+                # 2. Build Foreground (Video content)
+                if zoom_box:
+                    video_w = (int(float(zoom_box['width'])) // 2) * 2
+                    video_h = (int(float(zoom_box['height'])) // 2) * 2
+                    target_x = int(float(zoom_box['x']))
+                    target_y = int(float(zoom_box['y']))
+                    fg_filter = f"scale={video_w}:{video_h}"
+                    overlay_pos = f"{target_x}:{target_y}"
+                else:
+                    # Default: Center and Fit (Contain)
+                    fg_filter = f"scale={cw}:{ch}:force_original_aspect_ratio=decrease"
+                    overlay_pos = "(W-w)/2:(H-h)/2"
                 
                 fc = (
                     f"{pre_filters}split[v1][v2];"
                     f"[v1]{bg_filter}[bg];"
-                    f"[v2]scale={video_w}:{video_h}[fg];"
-                    f"[bg][fg]overlay={target_x}:{target_y}:shortest=1"
+                    f"[v2]{fg_filter}[fg];"
+                    f"[bg][fg]overlay={overlay_pos}:shortest=1"
                 )
                 self.player.vf = f"lavfi=[{fc}]"
                 self.player['keepaspect'] = 'no'
                 
-            elif is_blur_bg:
-                strength = settings.get("bg_blur_strength", 40)
-                R = float(self._canvas_ratio)
-                
-                canvas_w = 720
-                canvas_h = int(720 / R)
-                cw, ch = (canvas_w//2)*2, (canvas_h//2)*2
-                
-                pre_filters = f"{vf_str}[v0];[v0]" if vf_str else ""
-                fc = (
-                    f"{pre_filters}split[v1][v2];"
-                    f"[v1]scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},boxblur={strength}:5[bg];"
-                    f"[v2]scale={cw}:{ch}:force_original_aspect_ratio=decrease[fg];"
-                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
-                )
-                self.player.vf = f"lavfi=[{fc}]"
-                self.player['keepaspect'] = 'no'
             elif vf_str:
+                # Basic mode (Original ratio)
                 self.player.vf = f"lavfi=[{vf_str}]"
                 self.player['keepaspect'] = 'yes'
             else:
+                # Reset
                 self.player.vf = ""
                 self.player['keepaspect'] = 'yes'
         except Exception as e:
@@ -480,7 +477,7 @@ class PreviewWidget(QWidget):
         if initial_box:
             self._crop_overlay.set_box(initial_box)
         else:
-            self._crop_overlay.set_box({"x": 10, "y": 10, "width": 80, "height": 80})
+            self._crop_overlay.set_box({"x": 0, "y": 0, "width": 100, "height": 100})
         self._crop_overlay.set_aspect_ratio(aspect_ratio)
         self._crop_overlay.show()
         self._crop_overlay.raise_()
@@ -506,13 +503,18 @@ class PreviewWidget(QWidget):
         """Update the aspect ratio of the active crop overlay."""
         self._crop_overlay.set_aspect_ratio(ratio)
 
+    def set_zoom_aspect_ratio(self, ratio: float | None):
+        """Update the aspect ratio of the active zoom overlay."""
+        self._zoom_overlay.set_aspect_ratio(ratio)
+
     def _on_crop_changed(self, box: dict):
         """Called when user finishes dragging the crop frame."""
         self.crop_box_changed.emit(box)
 
     # ── Zoom Mode API ──
 
-    def enter_zoom_mode(self, initial_box: dict = None):
+    def enter_zoom_mode(self, initial_box: dict = None, aspect_ratio: float = None):
+        """Enable interactive zoom/scale overlay."""
         """Enable interactive zoom/scale overlay."""
         self._zoom_mode = True
         
@@ -525,6 +527,9 @@ class PreviewWidget(QWidget):
         offset = QPointF(0, 0)
         size = QRectF(0, 0, self._video_container.width(), self._video_container.height())
         self._zoom_overlay.set_canvas_offset(offset, size)
+        
+        # Set aspect ratio constraint
+        self._zoom_overlay.set_aspect_ratio(aspect_ratio)
         
         if initial_box:
             # {x, y, w, h} in canvas coordinates -> convert to widget
